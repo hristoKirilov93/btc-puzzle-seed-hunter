@@ -1,0 +1,16 @@
+# build artifacts
+gpuseed
+gpuseed_*
+*.o
+*.obj
+*.exe
+
+# run outputs / secrets
+seed_found.txt
+hit.enc
+*_progress.txt
+gpuseed_progress.txt
+
+# keypair (never commit the private key)
+hit_priv.pem
+hit_pub.pem
