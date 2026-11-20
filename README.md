@@ -1,4 +1,4 @@
-# 🧩 BTC Puzzle Seed Hunter — GPU deterministic-wallet searcher (`gpuseed`)
+# 🧩 BTC Puzzle Seed Hunter — GPU deterministic-wallet searcher (`gpuseed`) - If found, you get access to all unsolved puzzles ~903 BTC
 
 > Hunting the Bitcoin Puzzle creator's **Electrum v1 wallet seed** on the GPU —
 > every candidate seed generated, stretched, turned into a wallet and checked
