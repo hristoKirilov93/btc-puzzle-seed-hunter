@@ -1,4 +1,4 @@
-# 🧩 BTC Puzzle Seed Hunter — GPU deterministic-wallet searcher (`gpuseed`) - If found, you get access to all unsolved puzzles ~903 BTC
+# 🧩 BTC Puzzle Seed Hunter — GPU deterministic-wallet searcher (`gpuseed`)
 
 > Hunting the Bitcoin Puzzle creator's **Electrum v1 wallet seed** on the GPU —
 > every candidate seed generated, stretched, turned into a wallet and checked
@@ -59,8 +59,12 @@ GPU a*G (MPK):       OK
 GPU child(0,0):      OK
 P2PKH address test:  OK
 mnemonic (12 words): OK
+cascade detect test: OK
 SELFTEST PASS
 ```
+The `cascade detect test` plants a known wallet's own children as synthetic targets
+and confirms the GPU cascade actually fires on it — i.e. a matching seed really would
+be recognized, not just that the primitives are correct.
 If this does not say `SELFTEST PASS`, do not rely on the search — open an issue
 with your GPU, driver and CUDA version.
 
@@ -82,6 +86,7 @@ tested 1048576 | 24966 seeds/s | hits 0
 | `JUMP` | off | `JUMP=1` picks a fresh random base every batch (uniform sampling of the whole space) instead of a contiguous sweep. |
 | `PROGRESS` | `gpuseed_progress.txt` | Progress file for auto-resume. Give each GPU its own file for multi-card runs. |
 | `BASE_HI`,`BASE_LO` | — | Start from an explicit 128-bit base (two 64-bit hex halves). Overrides the progress file. |
+| `OFFMAX` | `3` | Cascade tries index offsets `off = 0..OFFMAX` for the wallet→puzzle index mapping. Higher = more robust if the creator's indexing differs, at a tiny cascade cost. |
 | `HIT_PUBKEY` | — | PEM public key; on a hit the secret is RSA-OAEP encrypted to `hit.enc` instead of written in clear. Use this on rented machines. |
 | `HIT_OUT` | `hit.enc` | Output file for the encrypted hit. |
 
@@ -255,8 +260,3 @@ implementation before shipping.
 
 ## License
 MIT — see [LICENSE](LICENSE).
-
-## Donations
-BTC: bc1qg752ll0pamt9s02f3qsqceucthmmaws0g7w5r8
-
-Thank you!

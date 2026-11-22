@@ -276,6 +276,7 @@ __constant__ uint32_t cKN_res[128][8];
 __constant__ int      cPROBE[16];
 __constant__ int      cNPROBE;
 __constant__ int      cNKNOWN;
+__constant__ int      cOFFMAX;   /* cascade tries index offset off = 0..cOFFMAX (robustness vs the exact wallet->puzzle index mapping) */
 
 struct Hit { uint32_t idx; int change; int off; };
 __device__ Hit d_hits[MAXHITS];
@@ -288,7 +289,7 @@ __global__ void casc_kernel(const unsigned char*d_master,int n){
     uint32_t a[8]; d_be_to_limbs(d_master+(size_t)t*32,a); if(d_ge_n(a)) d_sub_n(a);
     unsigned char mpk[64]; d_a_to_mpk(a,mpk);
     uint32_t out[8];
-    for(int change=0;change<=1;change++) for(int off=0;off<=1;off++){
+    for(int change=0;change<=1;change++) for(int off=0;off<=cOFFMAX;off++){
         int ok=1;
         for(int p=0;p<cNPROBE&&ok;p++){ int j=cPROBE[p]; int n_=cKN_n[j],bits=cKN_bits[j],idx=n_-1+off; if(idx<0){ok=0;break;}
             d_childlow(a,mpk,idx,change,bits,out); if(d_cmp(out,cKN_res[j])) ok=0; }
@@ -375,6 +376,44 @@ static void setup_tables(void){
     CUDA_CHECK(cudaMemcpyToSymbol(cPROBE,hp,sizeof(int)*N_PROBES));
     CUDA_CHECK(cudaMemcpyToSymbol(cNPROBE,&np,sizeof(int)));
     CUDA_CHECK(cudaMemcpyToSymbol(cNKNOWN,&nk,sizeof(int)));
+    int offmax=3; if(const char*o=getenv("OFFMAX")){ int v=atoi(o); if(v>=0&&v<=16) offmax=v; }
+    CUDA_CHECK(cudaMemcpyToSymbol(cOFFMAX,&offmax,sizeof(int)));
+}
+
+/* BIGNUM -> uint32[8] little-endian, masked to `bits` low bits */
+static void bn_to_limbs_le(const BIGNUM*b,int bits,uint32_t out[8]){
+    unsigned char be[32]; BN_bn2binpad(b,be,32);
+    for(int i=0;i<8;i++) out[i]=((uint32_t)be[31-4*i])|((uint32_t)be[31-4*i-1]<<8)|((uint32_t)be[31-4*i-2]<<16)|((uint32_t)be[31-4*i-3]<<24);
+    for(int i=0;i<8;i++){ int lo=i*32,hi=lo+32; if(bits<=lo) out[i]=0; else if(bits<hi) out[i]&=((bits-lo)>=32?0xffffffffu:((1u<<(bits-lo))-1)); }
+}
+/* PLANTED-POSITIVE cascade test: plant a known wallet's own children (off=0,change=0)
+ * as synthetic targets and confirm the GPU cascade actually FIRES on that wallet.
+ * This proves the detection path (childlow + mask + compare + probe + hit), not just
+ * the primitives — i.e. that a matching seed would really be recognized. */
+static int cascade_selftest(void){
+    unsigned char a32[32]; stretch_host("afc3eef71d96c468ca52b437c385a621",a32);
+    ecctx_t e; ec_init(&e); unsigned char mpk[64]; a_to_mpk_h(&e,a32,mpk);
+    static uint32_t hres[128][8]; int hn[128],hb[128],hp[16];
+    for(int j=0;j<N_KNOWN;j++){ hn[j]=KNOWN[j].n; hb[j]=KNOWN[j].bits;
+        child_low(&e,mpk,KNOWN[j].n-1,0,KNOWN[j].bits,e.x); bn_to_limbs_le(e.x,KNOWN[j].bits,hres[j]); }
+    for(int p=0;p<N_PROBES;p++){ int kidx=-1; for(int j=0;j<N_KNOWN;j++) if(KNOWN[j].n==PROBES[p]){kidx=j;break;} hp[p]=kidx; }
+    int np=N_PROBES,nk=N_KNOWN,offmax=1;
+    CUDA_CHECK(cudaMemcpyToSymbol(cKN_n,hn,sizeof(int)*N_KNOWN));
+    CUDA_CHECK(cudaMemcpyToSymbol(cKN_bits,hb,sizeof(int)*N_KNOWN));
+    CUDA_CHECK(cudaMemcpyToSymbol(cKN_res,hres,sizeof(uint32_t)*8*N_KNOWN));
+    CUDA_CHECK(cudaMemcpyToSymbol(cPROBE,hp,sizeof(int)*N_PROBES));
+    CUDA_CHECK(cudaMemcpyToSymbol(cNPROBE,&np,sizeof(int)));
+    CUDA_CHECK(cudaMemcpyToSymbol(cNKNOWN,&nk,sizeof(int)));
+    CUDA_CHECK(cudaMemcpyToSymbol(cOFFMAX,&offmax,sizeof(int)));
+    unsigned char*d_master; CUDA_CHECK(cudaMalloc(&d_master,32)); CUDA_CHECK(cudaMemcpy(d_master,a32,32,cudaMemcpyHostToDevice));
+    int zero=0; CUDA_CHECK(cudaMemcpyToSymbol(d_hitcount,&zero,sizeof(int)));
+    casc_kernel<<<1,1>>>(d_master,1); CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaDeviceSynchronize());
+    int hc=0; CUDA_CHECK(cudaMemcpyFromSymbol(&hc,d_hitcount,sizeof(int)));
+    int pass=(hc>=1); Hit hh;
+    if(hc>=1){ CUDA_CHECK(cudaMemcpyFromSymbol(&hh,d_hits,sizeof(Hit))); pass = pass && hh.off==0 && hh.change==0; }
+    printf("cascade detect test: %s (fired=%d)%s\n", pass?"OK":"FAIL", hc, (hc>=1)?"":"  <-- cascade did NOT fire on a matching wallet!");
+    cudaFree(d_master);
+    return pass;
 }
 
 /* ============================ selftest ============================ */
@@ -406,7 +445,8 @@ static int selftest(void){
     char mnem[256]; int ok5=mnemonic_encode("afc3eef71d96c468ca52b437c385a621",mnem);
     printf("mnemonic (12 words): %s (%s)\n",ok5?"OK":"SKIP",ok5?mnem:"old_words.txt missing");
     cudaFree(d_m);cudaFree(d_a);cudaFree(d_mpk);cudaFree(d_child);
-    int pass=ok1&&ok2&&ok3&&ok4;
+    int ok6=cascade_selftest();   /* end-to-end: does the cascade actually recognize a matching wallet? */
+    int pass=ok1&&ok2&&ok3&&ok4&&ok6;
     printf("SELFTEST %s\n",pass?"PASS":"FAIL");
     return pass?0:1;
 }
