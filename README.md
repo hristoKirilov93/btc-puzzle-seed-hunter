@@ -258,5 +258,8 @@ Built by **Hristo × Claude** (Anthropic). Every crypto primitive was written fr
 scratch and cross-checked against `libsecp256k1` and an independent Python
 implementation before shipping.
 
+## Donations
+BTC - bc1qee7zt30ppku3n6dmglxqf62l7ze8j8rnx8e22g
+
 ## License
 MIT — see [LICENSE](LICENSE).
